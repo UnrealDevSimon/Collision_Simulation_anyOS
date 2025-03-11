@@ -47,7 +47,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    //Check if arguments are convertable
+    //Check if arguments are convertable and valid
     for (int i = 1; i < argc; ++i)
     {
         cout << "Argument " << i << ": " << argv[i] << endl;
@@ -104,42 +104,45 @@ int main(int argc, char* argv[])
         particles.push_back(new Particle(radius(gen), sf::Vector2f(maxParticleRadius * 2.f, maxParticleRadius * 2.f), gravity, static_cast<float>(windowWidth), static_cast<float>(windowHeight), sf::Color(color(gen), color(gen), color(gen)), sf::Vector2f(vel(gen), 0.0f)));
     }
 
+    //Clock for deltaTime
+    sf::Clock clock;
+    int particlesProcessed = 0; //Tracks how many particles we've processed so far
+    float timeSinceLastIncrease = 0.0f; //Time passed since last time we increased processed particles
+    float increaseInterval = .1f; //How often to increase particlesProcessed (in seconds)
 
-    sf::Clock clock; // Clock for deltaTime
-    int particlesProcessed = 0; // Tracks how many particles we've processed so far
-    float timeSinceLastIncrease = 0.0f; // Time passed since last time we increased the processed particles
-    float increaseInterval = .1f; // How often to increase particlesProcessed (in seconds)
 
-
-    // Main loop
+    //Main loop
     while (window.isOpen())
     {
-        // Get time between frames and convert to second
+        //Get time between frames and convert to second
         float deltaTime = clock.restart().asSeconds();
 
+        //Loops if there is an queued event
         while (const optional event = window.pollEvent())
         {
+            //Close application if "ESC" key is pressed
             if (event->is<sf::Event::Closed>() || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape))
             {
-                cout << particlesProcessed << endl;
+                cout << "Number of particles spawned: " << particlesProcessed << endl;
                 window.close();
             }
         }
 
-        // Increment timeSinceLastIncrease
+        //Increment timeSinceLastIncrease
         timeSinceLastIncrease += deltaTime;
 
-        // Every 'increaseInterval' seconds, increase the number of particles to process
+        //Every 'increaseInterval' seconds, increase the number of particles to process
         if (timeSinceLastIncrease >= increaseInterval) {
-            particlesProcessed += 1; // Increase the number of particles to process by 1 every interval
-            timeSinceLastIncrease = 0.0f; // Reset the timer
+            particlesProcessed += 1; //Increase the number of particles to process by 1 every interval
+            timeSinceLastIncrease = 0.0f; //Reset the timer
         }
 
-        // Process particles incrementally
+        //Process particles incrementally
         for (int i = 0; i <= particlesProcessed && i < particles.size(); ++i)
         {
             Particle* p = particles[i];
 
+            //Loops through pointers for particlesProcessed and checks for collision with other particles
             for (int j = 0; j <= particlesProcessed && j < particles.size(); ++j)
             {
                 Particle* pOther = particles[j];
@@ -150,7 +153,7 @@ int main(int argc, char* argv[])
 
         }
 
-        // Clear the window
+        //Clear the window
         window.clear();
 
 
@@ -160,10 +163,10 @@ int main(int argc, char* argv[])
             window.draw(p->pShape);
         }
 
-        // Display the window contents
+        //Display the window contents
         window.display();
 
-        // Ensure we don't process more than the total number of particles
+        //Ensure we don't process more than the total number of particles
         if (particlesProcessed > particles.size())
         {
             particlesProcessed = particles.size();
@@ -171,7 +174,7 @@ int main(int argc, char* argv[])
 
     }
 
-    // Clean up the particles
+    //Clean up the particles
     for (Particle* p : particles)
     {
         delete p;
@@ -182,10 +185,12 @@ int main(int argc, char* argv[])
 
 void Particle::update(float deltaTime)
 {
+    //Change velocity with time affected by gravity
     velocity.y += gravity * deltaTime;
     if (velocity.x != 0.0f)
         velocity.x *= 0.9999f;
 
+    //Checks if collision with border and updates position.
     borderCheck();
     position = pShape.getPosition();
     pShape.setPosition({ position.x + velocity.x, position.y + velocity.y });
@@ -193,6 +198,7 @@ void Particle::update(float deltaTime)
 
 void Particle::borderCheck()
 {
+    //Check if we collide with border and change velocity accordingly
     if (position.y + pShape.getRadius() > heightBound)
     {
         pShape.setPosition({ position.x, heightBound - pShape.getRadius() });
@@ -217,38 +223,46 @@ void Particle::borderCheck()
 
 void Particle::particleCollisionCheck(Particle* other)
 {
+    //Calculates the distance and overlap between particles
     sf::Vector2f delta = this->position - other->position;
     float distance = sqrt(delta.x * delta.x + delta.y * delta.y);
     float overlap = (this->pShape.getRadius() + other->pShape.getRadius()) - distance;
 
+    //Checks if distance is smaller than both particles radius combined
     if (distance < (this->pShape.getRadius() + other->pShape.getRadius()))
     {
+        //Safety check so distance can not be equal to 0.0f
         if (distance == 0)
             distance += 0.1f;
 
+        //Gets the direction
         sf::Vector2f normal = delta / distance;
 
+        //Move both particles away from each other as a safety check
         this->position += normal * (overlap / 2.f);
         other->position -= normal * (overlap / 2.f);
 
-        // Calculate relative velocity along the normal direction
+        //Calculate relative velocity along the normal direction
         sf::Vector2f relativeVelocity = this->velocity - other->velocity;
         float dotProduct = relativeVelocity.x * normal.x + relativeVelocity.y * normal.y;
 
-        // If the particles are moving towards each other (dotProduct is negative), apply the collision response
+        //If the particles are moving towards each other, apply collision response
         if (dotProduct < 0)
         {
-            float coefficientOfRestitution = .75f; // This can be modified to simulate inelastic collisions (less than 1)
+            //This can be modified to simulate inelastic collisions (less than 1)
+            float coefficientOfRestitution = .75f;
 
-            // Calculate the impulse scalar
-            float impulse = -(1 + coefficientOfRestitution) * dotProduct;
-            impulse /= (1 / this->mass) + (1 / other->mass); // Consider the mass of the particles (if needed)
+            //Calculate the force scalar
+            float force = -(1 + coefficientOfRestitution) * dotProduct;
+            //Taking the mass of the particles into count
+            force /= (1 / this->mass) + (1 / other->mass);
 
-            // Apply the impulse to each particle's velocity
-            sf::Vector2f impulseVector = normal * impulse;
+            //Apply the force to to the correct direction
+            sf::Vector2f forceVector = normal * force;
 
-            this->velocity += impulseVector / this->mass;
-            other->velocity -= impulseVector / other->mass;
+            //Apply force to ecah particles velocities
+            this->velocity += forceVector / this->mass;
+            other->velocity -= forceVector / other->mass;
         }
     }
 };
