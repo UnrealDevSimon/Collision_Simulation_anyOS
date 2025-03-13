@@ -7,8 +7,20 @@
 #include <cstdlib>
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 using namespace std;
+
+//Forward declare classes
+class Grid;
+struct GridCell;
+class Particle;
+
+struct GridCell {
+    int xPos = 0;
+    int yPos = 0;
+    unordered_map<Particle*, GridCell*> particlesMap;
+};
 
 class Particle
 {
@@ -21,9 +33,11 @@ public:
     float widthBound;
     float heightBound;
     float mass = 1.f;
+    size_t cellSize = 0;
+    GridCell* myCell = nullptr;
 
-    Particle(float radius, sf::Vector2f position, float gravity, float widthBound, float heightBound, sf::Color color, sf::Vector2f velocity)
-        : position(position), gravity(gravity), widthBound(widthBound), heightBound(heightBound), velocity(velocity)
+    Particle(float radius, sf::Vector2f position, float gravity, float widthBound, float heightBound, sf::Color color, sf::Vector2f velocity, int cellSize)
+        : position(position), gravity(gravity), widthBound(widthBound), heightBound(heightBound), velocity(velocity), cellSize(cellSize)
     {
         pShape.setRadius(radius);
         pShape.setOrigin(sf::Vector2f(radius, radius));
@@ -35,6 +49,41 @@ public:
     void update(float deltaTime);
     void borderCheck();
     void particleCollisionCheck(Particle* other);
+    void checkCurrentCell(Grid& grid);
+
+};
+
+class Grid {
+public:
+    int cellSize;
+    int width;
+    int height;
+    bool bParticlesIsColliding = false;
+    vector< vector<GridCell> > cells;
+
+
+    Grid(int maxParticleRadius, uint16_t windowWidth, uint16_t windowHeight)
+    {
+        cellSize = maxParticleRadius * 5.f;
+        width = (windowWidth / cellSize);
+        height = (windowHeight / cellSize);
+
+        cells.resize(width, vector<GridCell>(height));
+
+        for (int y = 0; y < width; y++)
+        {
+            for (int x = 0; x < height; x++)
+            {
+                cells[y][x].xPos = x;
+                cells[y][x].yPos = y;
+            }
+        }
+    }
+
+    void isCellsColliding(GridCell& current, GridCell& other);
+    void findCollisionsGrid();
+    void addParticle(Particle* p, int pXPos, int pYPos);
+    void removeParticle(Particle* p);
 };
 
 //Main loop taking command arguments
@@ -56,8 +105,8 @@ int main(int argc, char* argv[])
         {
             if (i > 3)
             {
-                float intArg = stof(argv[i]);
-                cout << "Float argument: " << intArg << endl;
+                float floatArg = stof(argv[i]);
+                cout << "Float argument: " << floatArg << endl;
             }
             else
             {
@@ -97,25 +146,39 @@ int main(int argc, char* argv[])
 
     sf::RenderWindow window(sf::VideoMode({ windowWidth, windowHeight }), "Simulation window");
 
-    //Instanciate a objects
+    Grid grid(maxParticleRadius, windowWidth, windowHeight);
+
+    //Instanciate particles objects
     vector<Particle*> particles;
     for (int i = 0; i < spawnLimit; i++)
     {
-        particles.push_back(new Particle(radius(gen), sf::Vector2f(maxParticleRadius * 2.f, maxParticleRadius * 2.f), gravity, static_cast<float>(windowWidth), static_cast<float>(windowHeight), sf::Color(color(gen), color(gen), color(gen)), sf::Vector2f(vel(gen), 0.0f)));
+        particles.push_back(new Particle(
+            radius(gen),
+            sf::Vector2f(maxParticleRadius * 4.f, maxParticleRadius * 4.f),
+            gravity,
+            static_cast<float>(windowWidth),
+            static_cast<float>(windowHeight),
+            sf::Color(color(gen), color(gen), color(gen)),
+            sf::Vector2f(vel(gen), 0.0f),
+            maxParticleRadius * 5.f
+        ));
     }
 
     //Clock for deltaTime
     sf::Clock clock;
     int particlesProcessed = 0; //Tracks how many particles we've processed so far
     float timeSinceLastIncrease = 0.0f; //Time passed since last time we increased processed particles
-    float increaseInterval = .1f; //How often to increase particlesProcessed (in seconds)
-
+    float increaseInterval = .05f; //How often to increase particlesProcessed (in seconds)
+    float maxDeltaTime = 0.0f;
 
     //Main loop
     while (window.isOpen())
     {
         //Get time between frames and convert to second
         float deltaTime = clock.restart().asSeconds();
+
+        if (deltaTime > maxDeltaTime)
+            maxDeltaTime = deltaTime;
 
         //Loops if there is an queued event
         while (const optional event = window.pollEvent())
@@ -124,6 +187,7 @@ int main(int argc, char* argv[])
             if (event->is<sf::Event::Closed>() || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape))
             {
                 cout << "Number of particles spawned: " << particlesProcessed << endl;
+                cout << "DeltaTime: " << maxDeltaTime << endl;
                 window.close();
             }
         }
@@ -132,30 +196,25 @@ int main(int argc, char* argv[])
         timeSinceLastIncrease += deltaTime;
 
         //Every 'increaseInterval' seconds, increase the number of particles to process
-        if (timeSinceLastIncrease >= increaseInterval) {
+        if (timeSinceLastIncrease >= increaseInterval)
+        {
             particlesProcessed += 1; //Increase the number of particles to process by 1 every interval
             timeSinceLastIncrease = 0.0f; //Reset the timer
         }
+
+        grid.findCollisionsGrid();
 
         //Process particles incrementally
         for (int i = 0; i <= particlesProcessed && i < particles.size(); ++i)
         {
             Particle* p = particles[i];
 
-            //Loops through pointers for particlesProcessed and checks for collision with other particles
-            for (int j = 0; j <= particlesProcessed && j < particles.size(); ++j)
-            {
-                Particle* pOther = particles[j];
-                p->particleCollisionCheck(pOther);
-            }
-
+            p->checkCurrentCell(grid);
             p->update(deltaTime);
-
         }
 
         //Clear the window
         window.clear();
-
 
         for (int i = 0; i <= particlesProcessed && i < particles.size(); ++i) {
             Particle* p = particles[i];
@@ -194,7 +253,7 @@ void Particle::update(float deltaTime)
     borderCheck();
     position = pShape.getPosition();
     pShape.setPosition({ position.x + velocity.x, position.y + velocity.y });
-}
+};
 
 void Particle::borderCheck()
 {
@@ -219,7 +278,7 @@ void Particle::borderCheck()
         pShape.setPosition({ 0.0f + pShape.getRadius(), position.y });
         velocity.x *= -0.9f;
     }
-}
+};
 
 void Particle::particleCollisionCheck(Particle* other)
 {
@@ -263,6 +322,110 @@ void Particle::particleCollisionCheck(Particle* other)
             //Apply force to ecah particles velocities
             this->velocity += forceVector / this->mass;
             other->velocity -= forceVector / other->mass;
+        }
+    }
+};
+
+void Particle::checkCurrentCell(Grid& grid)
+{
+    //Calulates particles cellPosition
+    int cellXPos = (static_cast<int>(position.x) / cellSize);
+    int cellYPos = (static_cast<int>(position.y) / cellSize);
+
+    if (myCell != nullptr)
+    {
+        //Make sure the position is within bounds
+        cellXPos = cellXPos < 0 ? 0 : cellXPos;
+        cellXPos = cellXPos > grid.width - 1 ? grid.width - 1 : cellXPos;
+        cellYPos = cellYPos < 0 ? 0 : cellYPos;
+        cellYPos = cellYPos > grid.height - 1 ? grid.height - 1 : cellYPos;
+
+        //If we have a new cellPosition we add the particle to the new cell
+        if (sf::Vector2i(cellXPos, cellYPos) != sf::Vector2i(myCell->xPos, myCell->yPos))
+        {
+            grid.addParticle(this, cellXPos, cellYPos);
+        }
+    }
+    else
+    {
+        //If myCell is null we add particle to current cell (Inital cell)
+        grid.addParticle(this, cellXPos, cellYPos);
+    }
+};
+
+void Grid::findCollisionsGrid()
+{
+    //Looping through all cells
+    for (int x = 0; x < width; ++x)
+    {
+        for (int y = 0; y < height; ++y)
+        {
+            auto& currentCell = cells[x][y];
+
+            //Check surrounding cells, including itself
+            for (int dx = -1; dx <= 1; ++dx)
+            {
+                for (int dy = -1; dy <= 1; ++dy)
+                {
+                    //Get the neighboring cell coordinates
+                    int nx = x + dx;
+                    int ny = y + dy;
+
+                    //Ensure the neighboring cells are within bounds
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height)
+                    {
+                        //Skip duplicate checks: only compare (x, y) with (nx, ny) if we haven't already checked (nx, ny) with (x, y)
+                        if (nx > x || (nx == x && ny >= y))
+                        {
+                            auto& otherCell = cells[nx][ny];
+                            isCellsColliding(currentCell, otherCell);
+                        }
+                    }
+                }
+            }
+        }
+    }
+};
+
+void Grid::addParticle(Particle* p, int pXPos, int pYPos)
+{
+    //Check if myCell has a value and remove particle from current Map
+    if (p->myCell != nullptr)
+        removeParticle(p);
+
+    p->myCell = &cells[pXPos][pYPos];
+    //Adds particle to current Map
+    p->myCell->particlesMap.insert(pair<Particle*, GridCell*>(p, p->myCell));
+}
+
+void Grid::removeParticle(Particle* p)
+{
+    //Finds and remove particle from current Map
+    if (p->myCell->particlesMap.find(p) != p->myCell->particlesMap.end())
+    {
+        p->myCell->particlesMap.erase(p);
+        p->myCell = nullptr;
+    }
+};
+
+void Grid::isCellsColliding(GridCell& current, GridCell& other)
+{
+    //Loops through particlesMap
+    for (auto& particlePair : current.particlesMap)
+    {
+        //Get key value from map index
+        Particle* particle = particlePair.first;
+
+        //Loops through neighbouring particleMaps
+        for (auto& otherParticlePair : other.particlesMap)
+        {
+            //Get key value from map index
+            Particle* otherParticle = otherParticlePair.first;
+
+            if (particle != otherParticle)
+            {
+                particle->particleCollisionCheck(otherParticle);
+            }
         }
     }
 };
